@@ -33,3 +33,6 @@ py_test.out
 cpp_test.out
 torch_blade/*.so.*
 disc_compiler_main
+
+/dump_dir/
+*.gz
