@@ -32,3 +32,7 @@ build/
 /third_party/*.gz
 /third_party/*.zip
 /myenv/
+*.json
+*.bin
+*.pt
+*.txt
