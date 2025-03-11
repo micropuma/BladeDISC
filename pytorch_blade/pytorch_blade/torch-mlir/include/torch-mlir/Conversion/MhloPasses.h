@@ -42,6 +42,7 @@ namespace TorchConversion {
 } // namespace TorchConversion
 
 /// Registers all TorchToMhlo conversion passes.
+// 所有将torch script转换成MHLO的convert pass
 void registerTorchToMhloPasses();
 
 void createDiscTorchBackendToMhloBackendPipeline(

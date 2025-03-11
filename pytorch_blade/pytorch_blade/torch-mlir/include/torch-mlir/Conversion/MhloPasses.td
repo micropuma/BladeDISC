@@ -22,6 +22,7 @@ def DiscConvertTorchToMhlo: Pass<"convert-disc-torch-to-mhlo", "func::FuncOp"> {
   let constructor = "mlir::torch::TorchConversion::createDiscConvertTorchToMhloPass()";
 }
 
+// 添加值语义，即类似tensor，不可变
 def ApplyValueSemantics : Pass<"torch-apply-value-semantics", "func::FuncOp"> {
   let summary = "Use value-semantic tensors where possible.";
   let description = [{

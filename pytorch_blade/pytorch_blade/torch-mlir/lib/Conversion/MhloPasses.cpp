@@ -37,6 +37,7 @@ void ::mlir::torch::registerTorchToMhloPasses() {
       mlir::torch::createDiscTorchBackendToMhloBackendPipeline);
 }
 
+// 前端转换器pipeline
 void mlir::torch::createDiscTorchBackendToMhloBackendPipeline(
     OpPassManager& pm,
     const Torch::TorchLoweringPipelineOptions& options) {
