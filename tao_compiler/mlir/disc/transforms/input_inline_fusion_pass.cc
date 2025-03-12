@@ -64,6 +64,7 @@ namespace {
 
 constexpr unsigned c_MAX_ITERATION = 4096 * 1000;
 
+// todo
 void InputInlineFusion::runOnOperation() {
   func::FuncOp func = getOperation();
   auto* context = &this->getContext();

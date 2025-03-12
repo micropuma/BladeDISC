@@ -111,6 +111,7 @@ struct DiscStitchFusion : public DiscStitchFusionBase<DiscStitchFusion> {
 
 }  // namespace
 
+// todo
 std::unique_ptr<OperationPass<func::FuncOp>> createDiscStitchFusionPass() {
   return std::make_unique<DiscStitchFusion>();
 }

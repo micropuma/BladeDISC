@@ -536,6 +536,7 @@ LogicalResult ShapeSimplifierPass::applySymbolicShapeOptimization(
 
 }  // namespace
 
+// todo
 std::unique_ptr<OperationPass<ModuleOp>> createDiscShapeSimplifierPass(
     const std::string& entry_func_name, bool insert_tie_shape) {
   return std::make_unique<ShapeSimplifierPass>(entry_func_name,

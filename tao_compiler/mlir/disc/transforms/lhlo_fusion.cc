@@ -915,6 +915,7 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
 
 }  // namespace
 
+// todo
 std::unique_ptr<OperationPass<func::FuncOp>> createDiscFusionPass(
     bool gpu_enabled, const std::string& fusion_strategy,
     bool mlir_compute_intensive_codegen) {

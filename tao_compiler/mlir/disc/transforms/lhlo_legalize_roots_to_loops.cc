@@ -5852,6 +5852,7 @@ struct DiscLhloLegalizeRootsToParallelLoops
   }
 };
 
+// todo
 std::unique_ptr<OperationPass<func::FuncOp>>
 createDiscLhloLegalizeRootsToParallelLoopsPass(int core_count, int cc_major,
                                                int cc_minor) {

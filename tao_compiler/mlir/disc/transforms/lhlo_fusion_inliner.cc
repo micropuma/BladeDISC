@@ -50,6 +50,7 @@ struct LhloFusionInlinerPass
   }
 };
 
+// todo
 std::unique_ptr<OperationPass<func::FuncOp>> createLhloFusionInlinerPass() {
   return std::make_unique<LhloFusionInlinerPass>();
 }

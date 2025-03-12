@@ -197,6 +197,7 @@ struct DiscLowerGpuOpsToNVVMOpsPass
 
 }  // anonymous namespace
 
+// todo
 std::unique_ptr<OperationPass<gpu::GPUModuleOp>>
 createDiscLowerGpuOpsToNVVMOpsPass(unsigned indexBitwidth,
                                    bool hasRedux = false) {

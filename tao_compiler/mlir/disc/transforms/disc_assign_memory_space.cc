@@ -607,6 +607,7 @@ LogicalResult DiscAssignMemorySpacePass::applyOperationAssignment(
 
 }  // namespace
 
+// todo
 std::unique_ptr<OperationPass<ModuleOp>> createDiscAssignMemorySpacePass(
     const std::string& entry_func_name, bool gpu_enabled) {
   return std::make_unique<DiscAssignMemorySpacePass>(entry_func_name,

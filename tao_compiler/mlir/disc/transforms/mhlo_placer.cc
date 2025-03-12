@@ -59,6 +59,7 @@ PlacementType toPlacementType(StringRef s, bool default_is_gpu = false) {
 //  - ConstOp, SelectOp, IotaOp, DynamicIotaOp if type is i32
 //  - mhlo.dynamic_gather and mhlo.gather if operand_0's type is i32
 //  - Date operands but type is i32 according to kShapeCalcOperandMap
+// todo
 struct OpsPlacer : public PlaceOpsPassBase<OpsPlacer> {
  public:
   using PlaceOpsPassBase<OpsPlacer>::PlaceOpsPassBase;
