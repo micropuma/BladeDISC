@@ -2059,6 +2059,7 @@ void DiscShapeOptimizationPass::runOnOperation() {
 
 }  // namespace
 
+// shape相关的优化pass
 std::unique_ptr<OperationPass<ModuleOp>> createDiscShapeOptimizationPass(
     const std::string& entry_func_name, bool keep_tie_shape) {
   return std::make_unique<DiscShapeOptimizationPass>(entry_func_name,

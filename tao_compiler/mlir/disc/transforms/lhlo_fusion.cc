@@ -28,6 +28,7 @@ limitations under the License.
 #include "mlir/disc/utils/cycle_detector.h"
 #include "tensorflow/core/util/env_var.h"
 
+// 支持完全动态shape的XLA style fusion pass
 // This pass has similar functionality of the fusion pass in XLA stack.
 // However, unlike XLA, it targets the fully dynamic shape scenario.
 // Currently, it implements the kLoop and kInput fusion templates.

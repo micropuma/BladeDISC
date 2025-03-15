@@ -89,6 +89,7 @@ struct DISCLoweringOptions {
   CpuLoweringOptions cpu_options;
 };
 
+// 核心就是这几个lowering function
 LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options);
 
 LogicalResult LowerLLVMToBinary(ModuleOp m, const DISCLoweringOptions& options,

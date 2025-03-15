@@ -210,6 +210,7 @@ void CpuLoweringOptions::initFromEnvVars() {
                                    &llvm_target_cpu_features);
 }
 
+// 重点入口函数
 LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
   using mlir::func::FuncOp;
 

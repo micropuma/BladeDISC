@@ -40,6 +40,7 @@ limitations under the License.
 #include "stablehlo/dialect/ChloOps.h"
 #include "tensorflow/compiler/mlir/tensorflow/ir/tf_ops.h"
 
+// opt入口函数
 int main(int argc, char** argv) {
   mlir::registerAllPasses();
   mlir::mhlo::registerAllMhloPasses();
