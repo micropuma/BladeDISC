@@ -15,6 +15,7 @@
 namespace mlir {
 namespace disc_ral {
 
+// 重点看的pass，支持完全动态shape的XLA style fusion pass，并且是stitch版本，参考astitch项目
 ////////////////////// Stitch GPU FusionStrategy Implemenation /////////
 ////////////////////////////////////////////////////////////////////////
 
