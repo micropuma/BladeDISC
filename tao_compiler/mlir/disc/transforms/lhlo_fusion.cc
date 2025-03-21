@@ -917,6 +917,7 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
 }  // namespace
 
 // todo
+// 该Pass通过动态分析Shape约束和依赖关系，在保持正确性的前提下最大化算子融合机会，特别适合需要灵活处理动态Shape的AI推理场景。
 std::unique_ptr<OperationPass<func::FuncOp>> createDiscFusionPass(
     bool gpu_enabled, const std::string& fusion_strategy,
     bool mlir_compute_intensive_codegen) {
