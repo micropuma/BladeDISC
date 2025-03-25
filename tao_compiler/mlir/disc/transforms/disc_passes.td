@@ -30,6 +30,8 @@ def SplitLargeOpsPass : Pass<"split-large-ops", "mlir::func::FuncOp"> {
   ];
 }
 
+// 将static shape info从jit static rank compilation cache中提取出来，更新到IR中
+// 在IR中用attribute形式
 def ReviseArgumentsForStaticRankPass : Pass<"disc-tf-revise-args-for-static-rank", "ModuleOp"> {
   let summary = "extract the const/fixed-shape input info from jit static rank compilation cache, and update the info in the IR.";
   let constructor = "createReviseArgsForStaticRankPass()";
@@ -152,6 +154,7 @@ def SCFParallelLoopTiling : Pass<"disc-parallel-loop-tiling", "mlir::func::FuncO
   let dependentDialects = ["affine::AffineDialect"];
 }
 
+// XLA style fusion strategey
 def DiscFusionPass : Pass<"disc-fusion", "mlir::func::FuncOp"> {
   let summary = "Fuse lmhlo ops to kLoop/kInput fusion patterns.";
   let constructor = "createDiscFusionPass()";
@@ -395,11 +398,13 @@ def DiscMemrefCanonicalizer : Pass<"disc-memref-canonicalize", "mlir::func::Func
   let constructor = "createDiscMemrefCanonicalizerPass()";
 }
 
+// todo: cpu host codegen
 def DiscOutlineCpuKernel : Pass<"disc-outline-cpu-kernel", "ModuleOp"> {
   let summary = "outline each cpu kernel to a dedicated function.";
   let constructor = "createDiscOutlineCpuKernelPass()";
 }
 
+// todo: cpu host codegen
 def DiscCpuMapParallelLoop : Pass<"disc-cpu-map-parallel-loop", "mlir::func::FuncOp"> {
   let summary = "assign a parallel schedule for each parallel op on cpu.";
   let constructor = "createDiscCpuMapParallelLoopPass()";
