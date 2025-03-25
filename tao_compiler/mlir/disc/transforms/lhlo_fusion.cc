@@ -73,8 +73,11 @@ using placement_utils::kDiscPlaceAssignment;
 
 namespace {
 
+// 用于存储fusion pattern的信息
 using FusionPipeline = SmallVector<std::unique_ptr<FusionStrategy>>;
 
+// fusionplan 存储了一组fusion pattern，用于应用于一个block ops
+// 两种fusion pattern：kLoop和kInput
 // A fusion planner that can propose a fusion plan for a block of ops.
 // The fusion plan is consisted of a group of fusion patterns.
 //
@@ -94,9 +97,12 @@ using FusionPipeline = SmallVector<std::unique_ptr<FusionStrategy>>;
 //     - For element-wise op, its effective shape is its output shape.
 //     - For reduction op, its effective shape is its operand shape.
 //   - currently our downstreaming codegen engine only support 2d -> 1d tensor
+//   目前只支持2d -> 1d tensor的reduction
 //   reduction. TODO(disc): lift this limitation.
 //     - 2D row reduction: out[i] = sum({in[i][j] for all j})
 //     - 2D column reduction: out[j] = sum({in[i][j] for all i}
+
+// 这个fusion是block by block的，在一个block内部发现可fuse的pattern
 class FusionPlanner {
  public:
   explicit FusionPlanner(FusionPipeline& pipeline, Block* block,
@@ -107,6 +113,8 @@ class FusionPlanner {
     assert(!fusionPipeline_.empty());
     assert(block_ != nullptr);
     assert(shape_analysis_ != nullptr);
+
+    // 目前的fusion 策略是pipeline的第一个策略
     currentFusionStrategy_ = fusionPipeline_[0].get();
     // Move up metadata-only ops (e.g. dim, shape_of) as far as possible.
     MoveUpMetadataOnlyOpsForFusion();
@@ -135,6 +143,7 @@ class FusionPlanner {
   }
 
   // Returns a fusion plan if success, otherwise none.
+  // 根据已有的fusion strategy，组合排列fusion plan
   std::optional<FusionPlan> Run() {
     // Greedily search connected fusible pattern, and ops belonging to
     // a same fusion pattern are grouped into a cluster.
@@ -142,6 +151,7 @@ class FusionPlanner {
       currentFusionStrategy_ = strategy.get();
       // Re-init non-fusible fusion pattern using the given fusion strategy
       // since different fusion strategy may support different set of ops.
+      // 对于不同的fusion strategy，初始化fusion pattern
       initFusionPatterns();
       RunEdgeContractionLoop();
       if (!RunFusionPatternFinalization()) {
@@ -158,6 +168,7 @@ class FusionPlanner {
     for (Operation* op : op_list_) {
       Cluster* cluster = GetClusterForNode(op);
       if (!seen_clusters.insert(cluster).second) continue;
+      // 得到针对这个cluster适合的fusion pattern
       FusionPattern& fusion_pattern = cluster->fused_pattern();
       // Make sure the ops in a fusion pattern are in topological ordering.
       fusion_pattern.sortFusionOpListBy(op_to_node_id_);
@@ -166,11 +177,14 @@ class FusionPlanner {
               fusion_pattern.effectiveSize() == 1) {
         continue;
       }
+
+      // plan中维护fusion pattern的顺序，后续按照顺序用在cluster上
       plan.emplace_back(fusion_pattern);
     }
 
     // Re-order ops inside the blocks to make sure all producers are placed
     // before its consumers after fusion.
+    // 保证所有的producer在consumer之前，经过fusion之后
     ReorderOperationsInsideBlock();
     return plan;
   }
@@ -184,6 +198,7 @@ class FusionPlanner {
   // Represent a (partial) fused pattern
   class Cluster {
    public:
+    // 将node_id对应的operation添加到planner种
     Cluster(int node_id, FusionPlanner* planner)
         : node_id_(node_id), pattern_(planner->op_list()[node_id]) {}
 
@@ -223,8 +238,11 @@ class FusionPlanner {
 
   // init non-fusible fusion pattern with only one op using the given fusion
   // strategy since different fusion strategy may support different set of ops.
+  // 初始化fusion pattern
   void initFusionPatterns() {
+    // 按照post order，对于所有节点，初始化fusion pattern
     for (int32_t node : cycle_detector_->AllNodesInPostOrder()) {
+      // 找寻node id所在的cluster。如果cluster已经被初始化，则跳过
       Cluster* cluster = GetClusterForCyclesGraphNode(node);
       FusionPattern& pattern = cluster->fused_pattern();
       if (pattern.isFusible()) continue;
@@ -235,6 +253,7 @@ class FusionPlanner {
   // Metadata ops (e.g. shapeOf, dimOp) don't change data thus we move forward
   // them as far as possible inside the same block to enable more fusion
   // opportunities.
+  // shapeof和dimop对于data没有修改，所以move away，以增大fusion机会
   void MoveUpMetadataOnlyOpsForFusion() {
     SmallVector<Operation*, 4> ops;
     for (Operation& op : *block_) {
@@ -249,6 +268,9 @@ class FusionPlanner {
       Block* block = op->getBlock();
       if (isa<shape::ShapeOfOp>(op)) {
         Operation* definingOp = op->getOperand(0).getDefiningOp();
+        // 判断defining op是否在同一个block内部
+        // 如果defining op在同一个block，则插入在def后即可
+        // 否则插入block开头即可
         if (!inBlock(definingOp, block)) {
           op->moveBefore(block, block->begin());
         } else {
@@ -285,6 +307,7 @@ class FusionPlanner {
   }
 
   // Builds the initial dependency graph.
+  // 构建依赖图
   void BuildNodeMap() {
     int num_nodes = op_list_.size();
     for (int node_id = 0; node_id < num_nodes; ++node_id) {
@@ -350,15 +373,21 @@ class FusionPlanner {
   }
 
   using FnTy = llvm::function_ref<bool(Cluster*, Cluster*)>;
+  // 不支持block间的fusion
+  // todo
+  // 尝试对相邻或独立节点做fusion，以减少kernel的launch
+  // 同时也支持直接相连的节点融合
   bool ForEachEdgeInPostOrder(FnTy fn, bool enable_cross_fusion = false) {
     bool changed = false;
     for (int32_t node : cycle_detector_->AllNodesInPostOrder()) {
       Cluster* cluster_from = GetClusterForCyclesGraphNode(node);
       // Make a copy of the set of successors because we may modify the graph in
       // TryToContractEdge.
+      // 获取后继节点，均是潜在的fusion节点
       std::vector<int32_t> successors_copy =
           cycle_detector_->SuccessorsCopy(cluster_from->cycles_graph_node_id());
 
+      // 遍历后继节点并做fusion
       for (int to : successors_copy) {
         Cluster* cluster_to = GetClusterForCyclesGraphNode(to);
         bool contracted_edge = fn(cluster_from, cluster_to);
@@ -366,11 +395,13 @@ class FusionPlanner {
       }
     }
 
+    // 查看是否支持cross fusion
     if (!enable_cross_fusion) return changed;
 
     bool mem_intensive_opt_experiment = isMemIntensiveOptExperimentalEnabled();
 
     // To enable even more fusion opportunities (e.g. horizontal fusion)
+    // 插入虚拟边，以尝试复用vertical融合function
     for (int32_t lhs : cycle_detector_->AllNodesInPostOrder()) {
       Cluster* cluster_lhs = GetClusterForCyclesGraphNode(lhs);
       if (!cluster_lhs) {
@@ -436,10 +467,13 @@ class FusionPlanner {
   // the compatibility of the shapes of the outputs of the would-be fused
   // clusters.
   // Returns true is the merge was performed.
+  // 尝试对两个cluster做fusion操作。是否可以fusion，取决于两个cluster的操作和输出的shape是否兼容
   bool TryToContractEdge(Cluster* cluster_from, Cluster* cluster_to) {
     int from = cluster_from->cycles_graph_node_id();
     int to = cluster_to->cycles_graph_node_id();
 
+
+    // 显示判断是否可以contract，只要不生成cycle，则认定可以初步fuse
     if (!cycle_detector_->CanContractEdge(from, to)) {
       // cycle detected, recover the deleted edge.
       LLVM_DEBUG(llvm::dbgs()
@@ -457,12 +491,14 @@ class FusionPlanner {
     assert(optional_merged_node.has_value());
     cluster_from->set_cycles_graph_node_id(*optional_merged_node);
 
+    // 将from和to的fusion pattern合并
     // Merge the UnionFind Set.
     leader_for_node_.unionSets(from, to);
     return true;
   }
 
   // Greedily fuse connected node.
+  // 贪心地找到fusion nodes
   bool RunEdgeContractionLoop() {
     using std::placeholders::_1;
     using std::placeholders::_2;
@@ -567,6 +603,7 @@ class FusionPlanner {
     }
   }
 
+  // 融合模式的最后处理
   bool RunFusionPatternFinalization() {
     auto original_nodes = cycle_detector_->AllNodesInPostOrder();
     std::vector<FusionPattern> fusion_patterns;
@@ -714,7 +751,7 @@ class FusionPlanner {
   DenseMap<Value, Operation*> last_writer_;
 };
 
-struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
+struct : public DiscFusionPassBase<DiscFusionPass> {
   using DiscFusionPassBase<DiscFusionPass>::DiscFusionPassBase;
   explicit DiscFusionPass(bool gpu_enabled, const std::string& fusion_strategy,
                           bool mlir_compute_intensive_codegen)
@@ -726,11 +763,15 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
 
   FusionPipeline makeFusionPipeline() {
     FusionPipeline pipeline;
+    // 根据fusion的策略，构建不同的pipeline
     if (fusion_strategy_ == "base") {
       pipeline.emplace_back(
+          // XLA的basic fusion pipeline
           makeNewPlacementAwareFusionStrategy(gpu_enabled_, "base"));
     } else if (fusion_strategy_ == "stitch") {
-      if (gpu_enabled_) {
+      // astitch的fusion代码实现pipeline
+      if (gpu_enabled_) {、
+        // 支持计算密集型算子融合，则添加transform_based策略
         if (isCompIntensFusionEnabled()) {
           pipeline.emplace_back(
               makeNewPlacementAwareFusionStrategy(gpu_enabled_, "pre_dot"));
@@ -764,6 +805,7 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
     return pipeline;
   }
 
+  // 这个pass的入口函数
   void runOnOperation() override {
     func::FuncOp func = getOperation();
 
@@ -776,6 +818,7 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
     CollectBlocksInsideFunction(func, blocks);
 
     std::unique_ptr<ShapeAnalysis> shapeAnalysisPtr;
+    // 开启shape constraint IR
     if (useShapeConstraintIR()) {
       shapeAnalysisPtr.reset(new ShapeConstraintIRAnalysis(func));
     } else {
@@ -793,6 +836,8 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
     int64_t fusion_pattern_number = 0;
     for (Block* block : blocks) {
       FusionPlanner planner(pipeline, block, shapeAnalysisPtr.get());
+
+      // 运行fusion plan，找寻可以fusion的candidates
       std::optional<FusionPlan> plan = planner.Run();
       if (!plan.has_value()) {
         emitError(func.getLoc(),
@@ -801,6 +846,8 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
         return;
       }
       fusion_pattern_number += plan->size();
+
+      // 收集好可以fusion的candidates，然后应用fusion plan
       if (!ApplyFusionPlan(*plan)) {
         emitError(func.getLoc(), "apply fusion plan failed");
         signalPassFailure();
@@ -831,6 +878,7 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
       nameSet.insert(fusionName);
     });
     // Assign name to the fusion ops that don't have names.
+    // 遍历所有的fusion op，如果没有名字，就给它们分配一个名字
     func.walk([&](FusionOp op) {
       StringRef fusionName = getFusionName(op);
       if (!fusionName.empty()) return;
@@ -851,6 +899,7 @@ struct DiscFusionPass : public DiscFusionPassBase<DiscFusionPass> {
     });
   }
 
+  // Apply the fusion plan to the function.
   bool ApplyFusionPlan(FusionPlan& plan) {
     for (FusionPattern& pattern : plan) {
       if (disc_debug_max_fusion_number_ != INT_MIN) {

@@ -66,6 +66,7 @@ LogicalResult HandleCpuFusionOp(OpBuilder& b, Operation* fusion,
   return success();
 }
 
+// todo
 struct DiscStitchFusion : public DiscStitchFusionBase<DiscStitchFusion> {
   void runOnOperation() override {
     func::FuncOp func = getOperation();

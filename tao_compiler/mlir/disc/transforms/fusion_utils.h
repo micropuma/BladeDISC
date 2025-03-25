@@ -279,6 +279,7 @@ class FusionPatternBase {
   DenseMap<Value, Operation*> last_writer_;
 };
 
+// Fusion的核心部分，表示将要被融合的lmhlo ops的列表。
 // Represents a list of lmhlo ops that are going to be fused.
 // Concepts for a fusion pattern:
 //   - Root op: the op whose output is the fusion-pattern's output.
@@ -303,6 +304,8 @@ class FusionPattern : public FusionPatternBase {
   explicit FusionPattern(Operation* op);
 
   // Create a new fusion pattern from the ops inside the lmhlo fusion op.
+  // fusion Op必须搭配shape analysis使用，因为fusion op的shape信息是不完整的。
+  // 动态shape的tricks
   explicit FusionPattern(lmhlo::FusionOp op, ShapeAnalysis* shape_analysis);
 
   // Do not allow to build a fusion pattern with only FusionOp.
@@ -478,6 +481,9 @@ void setGlobalFusionOptions(const FusionOptions& options);
 // Here 'large' refer to having many operands.
 bool isLargeConcatOp(Operation* op);
 
+// 针对CPU，GPU各自有fusion strategy
+// 是否使用stitch还是朴素的XLA fusion strategy
+// 共4种组合strategy
 // Represents a specific fusion strategy.
 // Examples are:
 //  - basic fusion strategy for CPU device
@@ -495,6 +501,9 @@ class FusionStrategy {
   virtual bool pruneFusionPattern(ShapeAnalysis& shapeAnalysis,
                                   FusionPattern& fusion_pattern,
                                   SmallVectorImpl<Operation*>& excluded_ops);
+  
+  // FusionStrategy 是一个基类型，提供所有fusion strategy需要考虑的融合操作
+  // 由于BladeDISC是dynamicshape的，所以需要shape分析来指导fusion
   virtual bool tryFuseInplace(ShapeAnalysis& shapeAnalysis, FusionPattern& lhs,
                               FusionPattern& rhs);
   virtual bool tryFuse(ShapeAnalysis& shapeAnalysis, FusionPattern& lhs,
@@ -505,8 +514,10 @@ class FusionStrategy {
   FusionOptions options_;
 };
 
+// 存储device 的string到fusion strategy的映射关系
 using DeviceStrategyMap = DenseMap<StringRef, FusionStrategy*>;
 
+// 一个物理place位置相关的fusion 策略
 class PlacementAwareFusionStrategy : public FusionStrategy {
  public:
   PlacementAwareFusionStrategy(const FusionOptions& options,
@@ -516,6 +527,7 @@ class PlacementAwareFusionStrategy : public FusionStrategy {
         deviceStrategyMap_(std::move(deviceStrategyMap)),
         defaultDevice_(defaultDevice) {}
 
+  // 对于FusionStrategy中的functions进行override
   bool isFusible(Operation* op) override;
   bool isFusible(FusionPattern& fusion_pattern) override;
   bool tryFuse(ShapeAnalysis& shapeAnalysis, FusionPattern& lhs,

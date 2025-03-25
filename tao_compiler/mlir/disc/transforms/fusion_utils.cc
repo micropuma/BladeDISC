@@ -504,11 +504,13 @@ bool isRank2or3Transpose(Operation* op) {
 bool isFusible(Operation* op) {
   // Only scalar const are supported by the fusion codegen engine a.t.m.
   if (isa<lmhlo::ConstantOp>(op)) {
+    // 只有标量常量或者广播常量支持融合
     auto constant = cast<lmhlo::ConstantOp>(op);
     MemRefType type = constant.getOutput().getType().cast<MemRefType>();
     return (type.getRank() == 0 || constant.getValue().isSplat());
   }
 
+  // 逐元素操作都支持融合
   // All element ops are supported by the fusion codegen engine.
   if (isElementWise(op)) return true;
 
@@ -517,6 +519,7 @@ bool isFusible(Operation* op) {
   if (isa<lmhlo_disc::WhereOp>(op)) return true;
 
   // clang-format off
+  // 这些操作支持融合
   return isa<
     lmhlo::BroadcastInDimOp,
     lmhlo::BroadcastOp,
@@ -772,6 +775,7 @@ FusionPattern::FusionPattern(lmhlo::FusionOp op, ShapeAnalysis* shape_analysis)
 
   FusionStrategy& strategy =
       getFusionStrategy(deviceAttr.getValue(), strategyStr);
+  // 注意传入shape_analysis的是指针，因为shape_analysis是一个全局的单例
   bool status = strategy.initFusionPattern(*shape_analysis, *this);
   assert(status);
   (void)(status);
@@ -788,8 +792,10 @@ FusionPattern::FusionPattern(SmallVectorImpl<Operation*>& op_list)
 
 // Merges two fusion patterns and returns the merged pattern. The original
 // pattern remains unmodified. The new merged pattern is uninitialized.
+// 将当前的FusionPattern和other fusion pattern合并，返回一个新的FusionPattern
 FusionPattern FusionPattern::mergeWithoutInit(FusionPattern& other) {
   FusionOpList new_op_list = getOpList();
+  // 在new_op_list的末尾插入other的op_list
   new_op_list.insert(new_op_list.end(), other.getOpList().begin(),
                      other.getOpList().end());
   FusionPattern new_fusion_pattern{new_op_list};
@@ -1144,6 +1150,7 @@ bool FusionStrategy::pruneFusionPattern(
   return true;
 }
 
+// 将lhs和rhs做fuse
 bool FusionStrategy::tryFuseInplace(ShapeAnalysis& shapeAnalysis,
                                     FusionPattern& lhs, FusionPattern& rhs) {
   // both lhs & rhs should be fusible
@@ -1162,6 +1169,7 @@ bool FusionStrategy::tryFuseInplace(ShapeAnalysis& shapeAnalysis,
   return true;
 }
 
+// 尝试fuse
 bool FusionStrategy::tryFuse(ShapeAnalysis& shapeAnalysis, FusionPattern& lhs,
                              FusionPattern& rhs, FusionPattern& target) {
   auto& op_list = target.getOpList();
@@ -1703,6 +1711,7 @@ bool PlacementAwareFusionStrategy::pruneFusionPattern(
                                                   excluded_ops);
 }
 
+// 构造一个新的 PlacementAwareFusionStrategy 实例
 std::unique_ptr<FusionStrategy> makeNewPlacementAwareFusionStrategy(
     bool gpu_enabled, StringRef fusion_strategy) {
   DeviceStrategyMap deviceStrategyMap;
@@ -1711,6 +1720,8 @@ std::unique_ptr<FusionStrategy> makeNewPlacementAwareFusionStrategy(
       gpu_enabled ? placement_utils::kGpu : placement_utils::kCpu;
   deviceStrategyMap[defaultDevice] =
       &getFusionStrategy(defaultDevice, fusion_strategy);
+
+  // 构造 PlacementAwareFusionStrategy 实例
   return std::make_unique<PlacementAwareFusionStrategy>(
       options, defaultDevice, std::move(deviceStrategyMap));
 }
