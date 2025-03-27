@@ -331,6 +331,7 @@ class FusionPlanner {
       // Thus these operands are supposed to be updated.
       // Suppose that an op (or its nested ops) can only write the buffers
       // explicit passed in as operands of this op.
+      // 这段代码主要用于确保操作符的数据依赖性和内存写入一致性
       if (isInplaceOperator(op) ||
           (op->getDialect()->getTypeID() !=
                TypeID::get<lmhlo::LmhloDialect>() &&

@@ -82,6 +82,7 @@ constexpr StringRef kFusionOpNameAttr = "disc.fusion.name";
 constexpr StringRef kFusionOpTagAttr = "disc.fusion.tag";
 constexpr const char* kFusionTagSeparator = "X";
 
+// kLoop fusion和kInput fusion均是XLA支持的朴素fusion strategy
 // kLoop fusion template satisfies:
 //   - all ops in the fusion pattern are element-wise.
 //   - all the shapes of outputs of fusion pattern are same or have same number
@@ -98,6 +99,7 @@ constexpr const char* kFusionTagSeparator = "X";
 //   reduction. TODO: lift this limitation.
 //     - 2D row reduction: out[i] = sum({in[i][j] for all j})
 //     - 2D column reduction: out[j] = sum({in[i][j] for all i})
+// BladeDISC使用light astitch方法，支持shared memory缝合。
 // kStitch
 //   - stitch multi kernels into a bigger kernel using scratch memory
 enum FusionType {
@@ -105,6 +107,8 @@ enum FusionType {
   kNone,
   // kLoop fusion pattern
   kLoop,
+
+  // Input fusion可以分为row reduction和column reduction两种
   // kInput fusion pattern and all reduce ops of the fused pattern are row
   // reduction
   kRowReduction,
@@ -113,6 +117,7 @@ enum FusionType {
   kColReduction,
   // kInput fusion pattern
   kInput,
+
   // Stitch Fusion pattern
   kStitch,
   // A schedule for concat op having many operands.
@@ -135,6 +140,7 @@ StringRef fusionTypeToString(FusionType ft);
 // Convert to a fusion type from its string representation.
 FusionType fusionTypeFromString(StringRef ft);
 
+// =================== 辅助函数，用于判断operation的类型 ======================
 // Returns true if the op is an elementwise unary lmhlo op.
 // TODO: use fusibility interface
 bool isElementWiseUnary(Operation* op);
@@ -186,6 +192,7 @@ struct TileInfo {
   bool updateIfNotEqual(TileInfo& other);
 };
 
+// Fusion模版类，用于存储fusion pattern的基本信息，不包括dominant-op，subroot和fusion type等信息。
 // Basic information of fused operation set, including op-list, operands,
 // results, et.al. It does not provide informations for codegen schedules, like
 // dominant-op, subroot, fusion-type, et.al.
@@ -234,6 +241,7 @@ class FusionPatternBase {
 
   // Returns the effective size (e.g. not counting const ops) of the ops this
   // fusion pattern contains.
+  // 计算有效的操作集合大小，不包括const op
   int effectiveSize();
 
   // Sorts the ops inside the fusion pattern according to the keys provided.
@@ -246,6 +254,7 @@ class FusionPatternBase {
   // otherwise returns the last op that updates the buffer pointed by the
   // `value`.
   Operation* findLastWriter(Value value) {
+    // last_writer_中存储了value对应的最后一个写入op
     auto it = last_writer_.find(value);
     if (it != last_writer_.end()) {
       return it->second;
@@ -258,6 +267,7 @@ class FusionPatternBase {
   }
 
   bool alreadyInRootOps(Operation* new_op) {
+    // 判断该operation是否是rootOp
     for (Operation* op : root_ops_) {
       if (new_op == op) {
         return true;
@@ -268,6 +278,7 @@ class FusionPatternBase {
 
  protected:
   // Calculates the inputs and outputs of the fusion pattern.
+  // 这个函数计算经过fusion融合后，整个融合块的input和output。
   void calculateOperandsAndResults();
 
   FusionOpList op_list_;
@@ -275,14 +286,18 @@ class FusionPatternBase {
   FusionValueList results_;
   FusionValueList internal_results_;
   FusionValueList external_only_results_;
+
+  // 以stitch技术为例，root op指导了融合过程
   SmallVector<Operation*, 4> root_ops_;
   DenseMap<Value, Operation*> last_writer_;
 };
 
-// Fusion的核心部分，表示将要被融合的lmhlo ops的列表。
+// 表征lmhlo操作，这些操作是将要被融合的操作
+// 继承自FusionPatternBase，增加了dominant op，subroot op和fusion type等信息。
 // Represents a list of lmhlo ops that are going to be fused.
 // Concepts for a fusion pattern:
 //   - Root op: the op whose output is the fusion-pattern's output.
+//     Sub-root op可以理解为stich fusion的缝合点，为用shared-memory缝合的op bound
 //   - Sub-root op: the op whose output is to be maintained on shared-memory for
 //     kStitch fusion. Currently, we only support row-reduction to be a sub-root
 //     op.
@@ -315,6 +330,8 @@ class FusionPattern : public FusionPatternBase {
   // For kLoop fusion, a dominant op may be any op that has external users.
   // For kInput fusion, a dominant op may be a row reduction (if exists), or
   // a column reduction op.
+  // 对于kLoop融合，dominant op可以是任何有外部用户的op。
+  // 对于kInput融合，dominant op可以是行规约（如果存在），或列规约op。
   Operation* getDominantOp() { return dominant_op_; }
 
   // Sets the dominant op to the op provided.
@@ -351,6 +368,7 @@ class FusionPattern : public FusionPatternBase {
 
   // Merges two fusion patterns and returns the merged pattern. The original
   // pattern remains unmodified. The new merged pattern is uninitialized.
+  // 合并两个fusion pattern，相当于扩大fusion融合region
   FusionPattern mergeWithoutInit(FusionPattern& other);
 
   // Create a new fusion pattern with the given op list, without init.
@@ -367,6 +385,7 @@ class FusionPattern : public FusionPatternBase {
     sub_root_ops_ = sub_root_ops;
   }
 
+  // todo：可能是线程映射模版？
   struct SkeletonGroup {
     SmallVector<Operation*> skeletons;
     SmallVector<Operation*> root_member_list;
@@ -395,6 +414,8 @@ class FusionPattern : public FusionPatternBase {
   Operation* dominant_op_ = nullptr;
   FusionType fusion_type_ = FusionType::kNone;
   SmallVector<Operation*, 4> sub_root_ops_;
+
+  // 一个映射表，存储对于每个value的可能tile信息
   DenseMap<Value, TileInfo> tile_plan_;
   // An xroot op is either a root or a sub-root op. Regular xroots are those
   // whose element-number of non-tileds dimes are the same with sub-root ops.
@@ -425,6 +446,7 @@ bool mergeSkeletonGroupsInOrder(
 void dumpTilePlan(DenseMap<Value, TileInfo>& tilePlan);
 
 // Represents a list of disjoint fusion patterns for a block.
+// 一个block里面没有重叠的fusion pattern集合，为一个fusion plan
 using FusionPlan = std::vector<FusionPattern>;
 
 // Returns the name of the fusion op
@@ -491,6 +513,7 @@ bool isLargeConcatOp(Operation* op);
 //  - stitch fusion strategy for CPU device
 //  - stitch fusion strategy for GPU device
 class FusionStrategy {
+// 应用算子融合的重要策略
  public:
   FusionStrategy(const FusionOptions& options) : options_(options) {}
 
@@ -809,6 +832,7 @@ class BaseGpuFusionStrategy : public BaseFusionStrategy {
   virtual StringRef getName() override { return "BaseGpuFusionStrategy"; }
 };
 
+// 重点关注如何将stitch技术用在gpu上
 class StitchGpuFusionStrategy : public FusionStrategy {
  public:
   StitchGpuFusionStrategy(const FusionOptions& options)

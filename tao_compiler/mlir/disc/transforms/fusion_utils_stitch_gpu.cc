@@ -19,19 +19,26 @@ namespace disc_ral {
 ////////////////////// Stitch GPU FusionStrategy Implemenation /////////
 ////////////////////////////////////////////////////////////////////////
 
+// 找寻reductionOp，并归类到row_reductions和col_reductions
 bool findValidReductionOps(FusionPatternBase& target,
                            SmallVectorImpl<Operation*>& row_reductions,
                            SmallVectorImpl<Operation*>& col_reductions) {
   row_reductions.clear();
   col_reductions.clear();
+
+  // 获取当前潜在的operations
   auto& op_list = target.getOpList();
   for (Operation* op : op_list) {
+    // 首先判断是否是reductionOp
+    // 其次，目前的stitch fusion只支持2D的row reduction
+    // 因此判断是2D row还是2D col
     if (!isa<lmhlo::ReduceOp>(op)) continue;
     if (isRank2RowReduction(op)) {
       row_reductions.push_back(op);
     } else if (isRank2ColReduction(op)) {
       // Middle col-reduction is not supported currently. We may support it with
       // AStitch technique in the future.
+      // 目前AStitch不支持middle col-reduction
       int num_input_operand = op->getNumOperands() - getNumResultOperands(op);
       for (Value v : op->getOperands().drop_front(num_input_operand)) {
         for (Operation* user : getValueUsers(v)) {
@@ -90,6 +97,7 @@ Value StitchGpuFusionStrategy::getEffectiveShape(FusionPattern& target,
   Operation* result_op = target.findLastWriter(v);
   assert(result_op);
   // effective shape of reduce op is its operand's shape.
+  // reduce op的话，effective shape是其operand的shape
   return isa<lmhlo::ReduceOp>(result_op) ? result_op->getOperand(0) : v;
 }
 
@@ -363,6 +371,7 @@ bool StitchGpuFusionStrategy::tileCoverInfoPropagateO2I(
   return true;
 }
 
+// 判断使用哪种fusion pattern type，以及如何寻找subroot
 bool StitchGpuFusionStrategy::findFusionPatternTypeAndSubroot(
     ShapeAnalysis& shapeAnalysis, FusionPattern& fusion_pattern) {
   FusionType fusion_type = FusionType::kNone;
@@ -372,15 +381,18 @@ bool StitchGpuFusionStrategy::findFusionPatternTypeAndSubroot(
 
   SmallVector<Operation*, 4> row_reductions;
   SmallVector<Operation*, 4> col_reductions;
+  // 收集合法的redcution，reductionOp一般作为root op或是sub root op
   if (!findValidReductionOps(fusion_pattern, row_reductions, col_reductions)) {
     LLVM_DEBUG(llvm::dbgs() << "Check reduction ops failed.");
     return false;
   }
 
   // Check whether there is 'middle' row reduction. If there is, it is kStitch.
+  // 找寻是否有middle reduction，如果有，那么就是stitch fusion的点
   const auto& op_list = fusion_pattern.getOpList();
   DenseSet<Operation*> op_set(op_list.begin(), op_list.end());
   for (Operation* op : row_reductions) {
+    // 如果已经确定了融合方式，则不再继续
     if (fusion_type != FusionType::kNone) {
       break;
     }
@@ -389,6 +401,7 @@ bool StitchGpuFusionStrategy::findFusionPatternTypeAndSubroot(
       if (fusion_type != FusionType::kNone) {
         break;
       }
+      // 检查reductionOp的结果是否被其他op使用，如果是，那么就是stitch fusion
       for (Operation* user : getValueUsers(v)) {
         if (user == op) continue;
         if (op_set.find(user) != op_set.end()) {
@@ -410,6 +423,7 @@ bool StitchGpuFusionStrategy::findFusionPatternTypeAndSubroot(
   // - for kLoop, all results should have the same number of elements.
   // Note that kRowReduce that do not meet compatibility constraint are already
   // regarded as kStitch already.
+  // 针对普通fusion操作
   if (fusion_type != FusionType::kStitch) {
     if (!row_reductions.empty()) {
       fusion_type = FusionType::kRowReduction;
@@ -418,16 +432,19 @@ bool StitchGpuFusionStrategy::findFusionPatternTypeAndSubroot(
       // cannot determine the tile information.
       Value ref = cast<lmhlo::LmhloOp>(dominant_op).getResultBuffer();
       Value ref_shape = getEffectiveShape(fusion_pattern, ref);
+      // 验证所有输出的一致性
       if (!llvm::all_of(results, [&](Value result) {
             auto op = fusion_pattern.findLastWriter(result);
             if (op == dominant_op) {
               return true;
             }
             Value shape = getEffectiveShape(fusion_pattern, result);
+            // 如果是行规约，只用形状是一昂的，否则必须是元素个数相同
             return isRank2RowReduction(op)
                        ? shapeAnalysis.isShapeEqual(ref_shape, shape)
                        : shapeAnalysis.isSameNumElements(ref_shape, shape);
           })) {
+        // 否则，为stich
         fusion_type = FusionType::kStitch;
       }
     } else if (!col_reductions.empty()) {
@@ -444,9 +461,12 @@ bool StitchGpuFusionStrategy::findFusionPatternTypeAndSubroot(
             return isRank2ColReduction(op) &&
                    shapeAnalysis.isShapeEqual(ref_shape, shape);
           })) {
+
+        // 列规约不一致，直接失败
         return false;
       }
     } else {
+      // 没有reduction op，那么就是loop fusion
       for (Operation* op : fusion_pattern.getOpList()) {
         if (FusionStrategy::isFusible(op)) {
           // Ignore if already a kRowReduction or kColReduction, otherwise
@@ -466,6 +486,7 @@ bool StitchGpuFusionStrategy::findFusionPatternTypeAndSubroot(
         }
       }
       if (fusion_type == FusionType::kLoop) {
+        // kLoop要求元素个数相同
         Value ref_shape = getEffectiveShape(fusion_pattern, results[0]);
         if (!llvm::all_of(results, [&](Value result) {
               Value shape = getEffectiveShape(fusion_pattern, result);
@@ -487,12 +508,14 @@ bool StitchGpuFusionStrategy::findFusionPatternTypeAndSubroot(
   fusion_pattern.setDominantOp(dominant_op);
   fusion_pattern.setFusionType(fusion_type);
   if (fusion_type == FusionType::kStitch) {
+    // 如果是stich策略，那么所有的行规约操作都是sub root
     fusion_pattern.setSubRootOps(row_reductions);
   }
 
   return true;
 }
 
+// 线程自适应算法，todo
 bool StitchGpuFusionStrategy::tileXroots(ShapeAnalysis& shapeAnalysis,
                                          FusionPattern& fusion_pattern) {
   DenseMap<Value, TileInfo>& tile_plan = fusion_pattern.getTilePlan();
@@ -658,6 +681,7 @@ bool StitchGpuFusionStrategy::tileXroots(ShapeAnalysis& shapeAnalysis,
   return true;
 }
 
+// 线程自适应算法的反向传播
 bool StitchGpuFusionStrategy::backtraceTileAndCover(
     ShapeAnalysis& shapeAnalysis, FusionPattern& fusion_pattern, Value value) {
   const auto& op_list = fusion_pattern.getOpList();
@@ -711,6 +735,7 @@ bool StitchGpuFusionStrategy::backtraceTileAndCover(
   return propagateO2I(value, cover);
 }
 
+// gpu fusion的入口函数
 bool StitchGpuFusionStrategy::initFusionPattern(ShapeAnalysis& shapeAnalysis,
                                                 FusionPattern& fusion_pattern) {
   const auto& results = fusion_pattern.getResults();
@@ -718,25 +743,34 @@ bool StitchGpuFusionStrategy::initFusionPattern(ShapeAnalysis& shapeAnalysis,
     return false;
   }
 
+  // 找寻fusion pattern的类型以及subroot
   if (!findFusionPatternTypeAndSubroot(shapeAnalysis, fusion_pattern)) {
     return false;
   } else if (fusion_pattern.getFusionType() != FusionType::kStitch) {
     return true;
   }
+
+  // findFusionPatternTypeAndSubroot
+  // 设定当前block的fusion type，dominant op以及sub root op。 
   FusionType fusion_type = fusion_pattern.getFusionType();
   Operation* dominant_op = fusion_pattern.getDominantOp();
   const auto& subroots = fusion_pattern.getSubRootOps();
 
   // Analyze tile information of sub-roots and roots, identify regular/irregular
   // xroots.
+  // 尝试对于subroot和root分析线程自适应
   if (!tileXroots(shapeAnalysis, fusion_pattern)) {
     return false;
   }
+
+  // 获取针对当前fusion pattern的线程自适应plan
   DenseMap<Value, TileInfo>& tile_plan = fusion_pattern.getTilePlan();
 
   // Propagate tile information and data covering status back from skeleton ops.
+  // subroot op是骨架操作，用于传播tile shape
   DenseSet<Operation*> skeleton_op_set(subroots.begin(), subroots.end());
   const auto& external_only_results = fusion_pattern.getExternalOnlyResults();
+  // 该fusion region的外部输出，最后fusion内的操作者，也是骨架op
   for (Value res : external_only_results) {
     Operation* op = fusion_pattern.findLastWriter(res);
     skeleton_op_set.insert(op);
@@ -744,6 +778,8 @@ bool StitchGpuFusionStrategy::initFusionPattern(ShapeAnalysis& shapeAnalysis,
   DenseSet<Operation*> subroots_set(subroots.begin(), subroots.end());
   for (auto op : skeleton_op_set) {
     Value value;
+    // 如果是subroot，则从输入反向传播
+    // 如果不是，则要从输出反向传报
     if (subroots_set.contains(op)) {
       // Propagate from input for subroot (row-reduction).
       value = op->getOperand(0);
