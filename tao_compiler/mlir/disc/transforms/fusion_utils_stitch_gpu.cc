@@ -518,6 +518,7 @@ bool StitchGpuFusionStrategy::findFusionPatternTypeAndSubroot(
 // 线程自适应算法，todo
 bool StitchGpuFusionStrategy::tileXroots(ShapeAnalysis& shapeAnalysis,
                                          FusionPattern& fusion_pattern) {
+  // 先清空tile size
   DenseMap<Value, TileInfo>& tile_plan = fusion_pattern.getTilePlan();
   tile_plan.clear();
 
@@ -527,6 +528,8 @@ bool StitchGpuFusionStrategy::tileXroots(ShapeAnalysis& shapeAnalysis,
   const auto& subroots = fusion_pattern.getSubRootOps();
   const auto& dominant_op = fusion_pattern.getDominantOp();
   if (!llvm::all_of(subroots, [&](Operation* op) {
+        // 检查subrootOp和dominantOp的shape是否一致
+        // 目前只是支持stitch操作，后面的论文astitich会支持更多的操作
         if (op == dominant_op) {
           return true;
         } else {
@@ -539,12 +542,14 @@ bool StitchGpuFusionStrategy::tileXroots(ShapeAnalysis& shapeAnalysis,
   }
 
   // Tile subroots (row reductions).
+  // 对于subroot，设置其tile size
   for (Operation* op : subroots) {
     // Tile input dimentions for input.
     auto& in = tile_plan[op->getOperand(0)];
     auto reduce = cast<lmhlo::ReduceOp>(op);
     auto dimensions = reduce.getDimensions().getValues<int64_t>();
     for (const auto& en : llvm::enumerate(dimensions)) {
+      // 对于row reduction，比如[256, 128]，只对维度1进行tile
       in.tileSizes[en.value()] = ShapedType::kDynamic;
     }
     // No tile dimention for output.
@@ -553,6 +558,7 @@ bool StitchGpuFusionStrategy::tileXroots(ShapeAnalysis& shapeAnalysis,
 
   // Tile non-subroot results. Successfully tiled roots are identified as
   // regular xroots, while other roots are identified as irregular xroots.
+  // 对于非subroot进行tile操作，tile size不匹配的是irregular xroot，不能参与后续的融合
   auto& regular_xroots = fusion_pattern.getRegularXroots();
   auto& irregular_xroots = fusion_pattern.getIrregularXroots();
   regular_xroots.insert(subroots.begin(), subroots.end());
@@ -691,10 +697,12 @@ bool StitchGpuFusionStrategy::backtraceTileAndCover(
   DenseSet<Operation*> op_set(op_list.begin(), op_list.end());
   DenseSet<Operation*> subroots_set(subroots.begin(), subroots.end());
   DenseSet<Operation*> roots_set(roots.begin(), roots.end());
+  // 定义一个从ouput到input的反向传播辅助函数
   std::function<bool(Value, bool&)> propagateO2I;
   propagateO2I = [&](Value value, bool& cover) {
     auto op = fusion_pattern.findLastWriter(value);
     if (!op_set.contains(op) || subroots_set.contains(op)) {
+      // 由于subroot op是骨架操作，所以不需要进行反向传播
       // Note we already know both the input and output tile info for subroots.
       return true;
     }
