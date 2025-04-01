@@ -39,6 +39,7 @@ namespace disc_ral {
 constexpr llvm::StringRef kDhloInputShapeAttr = "disc.input_shape";
 constexpr llvm::StringRef kDhloInputValueAttr = "disc.input_value";
 constexpr llvm::StringRef kFuncEliminatedDeadArgumentsAttr = "disc.elimargs";
+// 显示标记一个函数是一个计算密集型的函数
 constexpr llvm::StringRef kFuncCompIntensFusionAttr = "disc.comp_intens_fusion";
 constexpr llvm::StringRef kDynLibPathAttr = "disc.dyn_lib_path";
 

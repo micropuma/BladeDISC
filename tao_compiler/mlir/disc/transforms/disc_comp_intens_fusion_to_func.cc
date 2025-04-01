@@ -46,6 +46,8 @@ void DiscCompIntensFusionToFuncPass::runOnOperation() {
   }
 }
 
+// 处理每一个fusion op
+// 将一个fusion op转换成独立的计算密集function
 void DiscCompIntensFusionToFuncPass::convertKCompIntensFusionToFunc(
     lmhlo::FusionOp op) {
   auto parent_func = op->getParentOfType<func::FuncOp>();

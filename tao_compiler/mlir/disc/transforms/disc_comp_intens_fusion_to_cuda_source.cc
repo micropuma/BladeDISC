@@ -428,6 +428,7 @@ bool DiscCompIntensFusionToCUDASourcePass::mayConvertCUDATypeToCutlassType(
 bool DiscCompIntensFusionToCUDASourcePass::
     generateCUDASourceForCompIntensFusionFunc(func::FuncOp func) {
   std::string cuda_code;
+  // 针对不同的cuda version，生成不同的CUTLASS代码
   if (cc_major_ < 8) {
     cuda_code =
 #include "mlir/disc/utils/gemm_fusion_linear_base_template_sm75.hpp"
@@ -664,13 +665,16 @@ void DiscCompIntensFusionToCUDASourcePass::runOnOperation() {
   ModuleOp module_op = getOperation();
 
   SmallVector<func::FuncOp> comp_intens_fusions;
+  // 找寻funcOp中带有kFuncCompIntensFusionAttr属性的函数
   module_op->walk([&](func::FuncOp func) {
     if (func->getAttrOfType<StringAttr>(kFuncCompIntensFusionAttr)) {
+      // 收集所有的计算密集型函数
       comp_intens_fusions.push_back(func);
     }
   });
 
   for (auto func : comp_intens_fusions) {
+    // 对所有的计算密集型函数运用cuda算子替换
     if (!generateCUDASourceForCompIntensFusionFunc(func)) {
       signalPassFailure();
     }
@@ -679,6 +683,8 @@ void DiscCompIntensFusionToCUDASourcePass::runOnOperation() {
 
 }  // namespace
 
+// todo: compute intensive codegen pass
+// 其核心目标是将MLIR中的GEMM（矩阵乘）融合操作转换为基于CUTLASS库的高性能CUDA代码。
 std::unique_ptr<OperationPass<ModuleOp>>
 createDiscCompIntensFusionToCUDASourcePass(int cc_major, int cc_minor) {
   return std::make_unique<DiscCompIntensFusionToCUDASourcePass>(cc_major,

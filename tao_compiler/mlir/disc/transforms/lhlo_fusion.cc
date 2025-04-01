@@ -773,6 +773,7 @@ struct : public DiscFusionPassBase<DiscFusionPass> {
       // astitch的fusion代码实现pipeline
       if (gpu_enabled_) {、
         // 支持计算密集型算子融合，则添加transform_based策略
+        // dot fusion是计算密集型算子融合才会使用的
         if (isCompIntensFusionEnabled()) {
           pipeline.emplace_back(
               makeNewPlacementAwareFusionStrategy(gpu_enabled_, "pre_dot"));

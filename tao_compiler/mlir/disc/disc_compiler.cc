@@ -225,6 +225,7 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
   pm.getContext()->disableMultithreading();
 
   // make sure some dependent dialects are loaded.
+  // 加载依赖的方言
   mlir::DialectRegistry registry;
   mlir::registerLLVMDialectTranslation(registry);
   mlir::registerNVVMDialectTranslation(registry);
@@ -246,6 +247,7 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
 
   pm.addNestedPass<FuncOp>(disc_ral::createDiscAlgebraicSimplifierPass());
   pm.addPass(disc_ral::createDiscInputOutputAliasPass());
+  // BladeDISC的重要的一个pass：动态形状推导
   pm.addPass(disc_ral::createDiscShapePropagatePass());
   pm.addPass(mlir::createInlinerPass());
   // TODO(disc): Lower HLO shape constraints instead of eliding them here.
@@ -480,6 +482,7 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
     setGlobalFusionOptions(fusionOptions);
   }
   if (enable_stitch && gpu_enabled) {
+    // 是否支持stitch内存融合
     // Some passes introduce a bunch of memref alloc, load and store to for
     // shape operations (e.g., ReshapeOp(.., target_shape, ..)), which makes
     // shape equality analysis quite tricky. This pass helps to eliminate
@@ -495,6 +498,7 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
       (!gpu_enabled || (gpu_enabled && gpu_options.cc_major >= 8));
   pm.addNestedPass<FuncOp>(disc_ral::createDiscFusionPass(
       gpu_enabled, fusion_strategy, mlir_compute_intensive_codegen));
+  // 做计算密集算子融合
   if (enable_comp_intens_fusion && gpu_enabled) {
     pm.addPass(disc_ral::createDiscCompIntensFusionToFuncPass());
   }
@@ -643,6 +647,7 @@ LogicalResult LowerHLOToLLVM(ModuleOp m, const DISCLoweringOptions& options) {
 
   if (gpu_enabled) {
     // Lower dot fusion to CUDA.
+    // 将dot fusion转换为CUTLASS库算子
     pm.addPass(disc_ral::createDiscCompIntensFusionToCUDASourcePass(
         gpu_options.cc_major, gpu_options.cc_minor));
 

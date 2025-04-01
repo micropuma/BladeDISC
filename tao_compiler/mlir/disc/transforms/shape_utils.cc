@@ -1932,6 +1932,7 @@ bool ShapeAnalysis::isProductEqual(Value lhs, int lhsFrom, int lhsTo, Value rhs,
   return isProductEqual(lhs, lhsDimIdxs, rhs, rhsDimIdxs);
 }
 
+// 核心部分，分析动态shape的memref的shape约束
 ShapeConstraintIRAnalysis::ShapeConstraintIRAnalysis(Operation* op)
     : op_(op), mgr_(op->getParentOfType<ModuleOp>()) {
   mgr_.load();
