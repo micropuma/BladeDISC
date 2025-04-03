@@ -32,6 +32,7 @@
 // merge can actually be regarded as a kind of horizontal fusion. We will
 // reassess the necessity of merging this pass into the fusion-pass after fixing
 // the bugs in horizontal fusion functions in lhlo-fusion-pass.
+// 这个pass可以看做是一个横向fusion的pass
 
 namespace mlir {
 namespace disc_ral {
@@ -75,6 +76,8 @@ void BuildBlockGraphCycles(Block* block,
   }
 }
 
+// 一个cluster存储了一个dot的集合
+// 并且有显示的cluster_id
 struct DotCluster {
   DotCluster(Operation* op, int op_id) : leader_op_id(op_id) {
     ops.push_back(op);
@@ -82,6 +85,7 @@ struct DotCluster {
 
   // Merges `other` into this cluster, and clears `other`.
   void merge(DotCluster& other) {
+    // 经典SmallVector merge手法
     ops.insert(ops.end(), other.ops.begin(), other.ops.end());
     other.ops.clear();
   }
@@ -94,22 +98,26 @@ struct DotCluster {
 };
 
 // The `src` cluster will be cleared if the merge is succeed.
+// 尝试将src cluster merge入到dst cluster中
 void TryMergeDotClusters(DotCluster& dst, DotCluster& src,
                          std::unique_ptr<GraphCycles>& cycle_detector) {
   // Check cycle.
   int64_t dst_id = dst.leader_op_id;
   int64_t src_id = src.leader_op_id;
+  // 判断是否可以merge，重点是判断是否有cycle的产生。
   auto optional_merged_id = TryMergeNode(cycle_detector.get(), dst_id, src_id);
   if (!optional_merged_id.has_value()) {
     // It forms a cycle.
     return;
   }
+  // 通过判断没有cycle产生，进行merge操作。
   dst.merge(src);
   dst.leader_op_id = *optional_merged_id;
 }
 
 // The `MergingShapeEqualityMap` is a map whose value is a list of dots with
 // same `MergingShape`.
+// 由于有两种策略，所以选择使用template function
 template <typename MergingShapeEqualityMap>
 void BuildDotClusters(Block* block,
                       const MergingShapeEqualityMap& equal_merge_shape_map,
@@ -119,18 +127,22 @@ void BuildDotClusters(Block* block,
   // does not introduce cycle.
 
   // Form cycle detector.
+  // 构造cycle监视器，如果会引入cycle，则不允许merge
   std::unique_ptr<GraphCycles> cycle_detector(new GraphCycles(0));
   DenseMap<Operation*, int64_t> op_to_node_id;
   BuildBlockGraphCycles(block, cycle_detector, op_to_node_id);
 
   // Find merge clusters.
+  // 针对每一个dot的集合，尝试找寻哪些op可以构建成一个dot
   for (auto& dots_can_merge : equal_merge_shape_map) {
     auto ops = dots_can_merge.second;
+    // 如果这个集合的大小小于2，则不需要建立dot集和
     if (ops.size() < 2) {
       continue;
     }
     SmallVector<DotCluster> clusters;
     for (auto op : ops) {
+      // 初始每个op一个cluster
       clusters.emplace_back(op.getOperation(),
                             op_to_node_id[op.getOperation()]);
     }
@@ -140,14 +152,19 @@ void BuildDotClusters(Block* block,
         continue;
       }
       for (int64_t j = i + 1; j < clusters.size(); j++) {
+        // 尝试对于op之后的operation，尝试一点一点的merge起来
+        // 这里时间复杂度是O(n^2)，有点高
         auto& to_merge = clusters[j];
         if (to_merge.ops.empty()) {
           continue;
         }
         // Try merge.
+        // 这里的所有op，是先前通过map收集的在Left或是Right模式中shape一致的op，即潜在的融合op
         TryMergeDotClusters(merged, to_merge, cycle_detector);
       }
     }
+
+    // 最后更新一遍cluster
     for (auto& cluster : clusters) {
       if (cluster.ops.size() > 1) {
         merging_clusters.push_back(cluster);
@@ -164,10 +181,12 @@ class DotShareOperandMergeConverter {
  public:
   enum ShareType : int32_t { LEFT = 0, RIGHT = 1 };
 
+  // 一个DotShareInfo包含了一个dot的共享操作数和维度信息
   struct DotShareInfo {
     Value share_operand;
     mhlo::DotDimensionNumbersAttr dimension_numbers;
 
+    // 重载一个==运算符
     bool operator==(const DotShareInfo& other) const {
       return (share_operand == other.share_operand) &&
              (dimension_numbers == other.dimension_numbers);
@@ -200,6 +219,7 @@ class DotShareOperandMergeConverter {
     }
   };
 
+  // 定义一个无序map，key是一个DotShareInfo，value是一个dot集合，DotShareInfoHash是用于生成hash键值
   using ShareOperandMap =
       std::unordered_map<DotShareInfo, SmallVector<mhlo::DotGeneralOp>,
                          DotShareInfoHash>;
@@ -213,21 +233,31 @@ class DotShareOperandMergeConverter {
   func::FuncOp func_;
 };
 
+// 合并两个operation，有相同的operand
+// 比如dot(x,y) 和 dot(x,z) 可以合并成 dot(concat(x,y),z)
 void DotShareOperandMergeConverter::run() {
   SmallVector<Block*> blocks;
   func_.walk([&](Block* block) { blocks.push_back(block); });
   for (Block* block : blocks) {
+    // 针对的是二元操作，所以遍历是left相同还是right相同
+    // todo：感觉这里有可扩展的地方
     for (auto share_type : SmallVector<ShareType, 2>({LEFT, RIGHT})) {
+      // 显示使用一个map，来存储一个dot集群映射，该dot集群需要有相同的shape和维度数据
       // A map to help to cluster dots with same shape and dim-numbers together.
       ShareOperandMap share_operand_map;
+      // 构建share_operand_map
       if (!buildShareOperandMap(block, share_operand_map, share_type)) {
         continue;
       }
       // Find merging clusters.
+      // 根据我们的map，去做dot的merge操作
       SmallVector<DotCluster> merging_clusters;
+      // 根据shareOperandMap来构建初始dot集群
+      // 使用template模版方法
       BuildDotClusters<ShareOperandMap>(block, share_operand_map,
                                         merging_clusters);
       // Apply merging.
+      // 对于明确可以merge的dot集群，进行merge操作
       for (auto& cluster : merging_clusters) {
         applyMerging(cluster, share_type);
       }
@@ -235,19 +265,24 @@ void DotShareOperandMergeConverter::run() {
   }
 }
 
+// 针对给定block，按照share_type来构建一个share_operand_map
 bool DotShareOperandMergeConverter::buildShareOperandMap(
     Block* block, ShareOperandMap& share_operand_map, ShareType share_type) {
+  // 遍历block里的的所有dot general op
   block->walk([&](mhlo::DotGeneralOp op) {
     // get one-side operand shareinfo according to the share_type
     DotShareInfo share_info;
+    // 按照share_tye收集每个op的share_operand以及维度信息
     share_info.share_operand = (share_type == LEFT) ? op.getLhs() : op.getRhs();
     share_info.dimension_numbers = op.getDotDimensionNumbers();
+    // 添加对应的op作为value，shareinfo为键
     auto& shared_op_list = share_operand_map[std::move(share_info)];
     shared_op_list.push_back(op);
   });
   return true;
 }
 
+// 完成实际的merge操作
 bool DotShareOperandMergeConverter::applyMerging(DotCluster& cluster,
                                                  ShareType share_type) {
   auto& ops = cluster.ops;
@@ -476,6 +511,11 @@ bool DotShareOperandMergeConverter::applyMerging(DotCluster& cluster,
   return true;
 }
 
+// 批次融合，从而显示添加原批次维度
+// 如下是一个维度拼接例子：
+// OperandShape Merge 维度拼接示例
+// 合并前形状: [B, K1, M] 和 [B, K2, M]  
+// 合并后形状: [B, K1+K2, M]
 class DotBatchMergeConverter {
  public:
   DotBatchMergeConverter(func::FuncOp func) : func_(func){};
@@ -549,7 +589,9 @@ class DotBatchMergeConverter {
   func::FuncOp func_;
 };
 
+// 做batch维度融合
 bool DotBatchMergeConverter::run() {
+  // 形状分析：建立张量维度符号系统
   ShapeAnalysisDeprecated analysisDeprecated(func_);
   if (failed(analysisDeprecated.run())) {
     LLVM_DEBUG(llvm::dbgs()
@@ -557,6 +599,9 @@ bool DotBatchMergeConverter::run() {
     return false;
   }
 
+  // 遍历函数的每一个block
+  // 可以发现，其代码逻辑和DotShareOperandMergeConverter是类似的
+  // 核心就在ShapeAnalysisDeprecated分析和buildMergingShapeMap，均是个性化的函数设计
   SmallVector<Block*> blocks;
   func_.walk([&](Block* block) { blocks.push_back(block); });
 
@@ -580,6 +625,7 @@ bool DotBatchMergeConverter::run() {
   return true;
 }
 
+// 形状聚类映射构建
 bool DotBatchMergeConverter::buildMergingShapeMap(
     Block* block, ShapeAnalysisDeprecated& analysisDeprecated,
     MergingShapeEqualMap& equal_merge_shape_map) {
@@ -588,7 +634,9 @@ bool DotBatchMergeConverter::buildMergingShapeMap(
     Value lhs = op.getLhs();
     Value rhs = op.getRhs();
     // Initialize `dimension_numbers`.
+    // 提取维度配置信息
     dot_shape.dimension_numbers = op.getDotDimensionNumbers();
+    // 分析批次维度符号
     auto lhs_batch_dims =
         dot_shape.dimension_numbers.getLhsBatchingDimensions();
     auto rhs_batch_dims =
@@ -601,6 +649,7 @@ bool DotBatchMergeConverter::buildMergingShapeMap(
           std::move(analysisDeprecated.getDimValue(lhs, dim)));
     }
     // Initialize `contracting_dim`.
+    // 分析收缩维度符号
     auto lhs_contracting_dims =
         dot_shape.dimension_numbers.getLhsContractingDimensions();
     assert(lhs_contracting_dims.size() == 1);
@@ -870,6 +919,7 @@ Value DotBatchMergeConverter::expandDim0(OpBuilder& builder, Location& loc,
   return dyn_reshape;
 }
 
+// 将两个相关的dot ops合并成一个dot op
 struct DiscDotMergePass : public DiscDotMergePassBase<DiscDotMergePass> {
   DiscDotMergePass()
       : DiscDotMergePassBase<DiscDotMergePass>::DiscDotMergePassBase() {}
