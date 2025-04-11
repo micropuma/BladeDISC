@@ -476,12 +476,14 @@ struct DiscConvRewriterPass
 
 }  // namespace
 
+// 普通的conv op
 std::unique_ptr<OperationPass<func::FuncOp>> createDiscConvRewriter(
     int cc_major, int cc_minor) {
   return std::make_unique<DiscConvRewriterPass<mhlo::DynamicConvOp>>(cc_major,
                                                                      cc_minor);
 }
 
+// 对于conv op做量化
 std::unique_ptr<OperationPass<func::FuncOp>> createDiscQuantizedConvRewriter(
     int cc_major, int cc_minor) {
   return std::make_unique<
